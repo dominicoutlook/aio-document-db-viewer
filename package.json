@@ -1,0 +1,12 @@
+{
+  "name": "aio-document-db-viewer",
+  "version": "1.0.0",
+  "description": "Simple web app to browse AIO App Builder document database collections",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

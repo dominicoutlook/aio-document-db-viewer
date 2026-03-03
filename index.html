@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIO Document DB Viewer</title>
+<style>
+  :root {
+    --bg-main: #f8fafc;
+    --bg-sidebar: #0f172a;
+    --bg-card: #ffffff;
+    --text-main: #1e293b;
+    --text-muted: #64748b;
+    --text-sidebar: #e2e8f0;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --danger: #ef4444;
+    --danger-hover: #dc2626;
+    --border: #e2e8f0;
+    --radius: 8px;
+    --font-mono: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; height: 100vh; display: grid; grid-template-columns: 260px 1fr; background: var(--bg-main); color: var(--text-main); }
+
+  /* Sidebar */
+  #sidebar { background: var(--bg-sidebar); color: var(--text-sidebar); padding: 20px; overflow-y: auto; display: flex; flex-direction: column; border-right: 1px solid #1e293b; }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 12px; margin-top: 20px; display: flex; align-items: center; justify-content: space-between; }
+  #sidebar h2:first-child { margin-top: 0; }
+  #sidebar ul { list-style: none; }
+  #sidebar li { padding: 10px 14px; cursor: pointer; border-radius: var(--radius); font-size: 14px; margin-bottom: 4px; word-break: break-all; transition: all 0.2s; }
+  #sidebar li:hover { background: #1e293b; }
+  #sidebar li.active { background: var(--accent); color: #fff; }
+  #sidebar .loading { color: #94a3b8; font-size: 13px; cursor: default; }
+
+  #env-section { margin-bottom: 24px; }
+  #env-select { width: 100%; padding: 10px 12px; border-radius: var(--radius); border: 1px solid #334155; background: #020617; color: #f8fafc; font-size: 14px; margin-bottom: 10px; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; background-size: 16px; }
+  .env-actions { display: flex; gap: 8px; }
+  .env-actions button { flex: 1; padding: 8px 0; font-size: 12px; font-weight: 500; border: none; border-radius: 6px; cursor: pointer; color: #fff; transition: opacity 0.2s; }
+  .btn-env-add { background: var(--accent); }
+  .btn-env-remove { background: #334155; }
+  .btn-env-add:hover, .btn-env-remove:hover { opacity: 0.9; }
+
+  .btn-refresh { background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 16px; transition: color 0.2s; }
+  .btn-refresh:hover { color: #f8fafc; }
+  .btn-add-col { background: none; border: 1px dashed #475569; color: #94a3b8; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+  .btn-add-col:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Loader */
+  .loader-container { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-muted); }
+  .loader { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Main Content */
+  #main { display: flex; flex-direction: column; overflow: hidden; }
+  #header { background: #fff; padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; min-height: 70px; }
+  #header h1 { font-size: 18px; font-weight: 600; color: var(--text-main); }
+  .header-actions { display: flex; gap: 12px; }
+
+  /* Tabs */
+  .tabs { display: flex; background: #fff; border-bottom: 1px solid var(--border); padding: 0 24px; gap: 24px; }
+  .tab { padding: 16px 0; font-size: 14px; font-weight: 500; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+  .tab:hover { color: var(--text-main); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  #content { flex: 1; overflow: auto; padding: 24px; }
+
+  /* Cards & Forms */
+  .card { background: #fff; border-radius: var(--radius); border: 1px solid var(--border); padding: 20px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .card h3 { font-size: 15px; margin-bottom: 16px; color: var(--text-main); }
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+  .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background: #fff; }
+  .form-group textarea { font-family: var(--font-mono); resize: vertical; }
+
+  .btn { padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--bg-main); color: var(--text-main); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--border); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { background: var(--danger-hover); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Results Table */
+  .table-container { width: 100%; overflow-x: auto; background: #fff; border-radius: var(--radius); border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { background: #f8fafc; padding: 12px 16px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 12px 16px; font-size: 13px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); color: var(--text-main); max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f8fafc; }
+  td:hover { white-space: normal; word-break: break-all; }
+
+  .badge { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+  .badge-success { background: #dcfce7; color: #166534; }
+  .badge-error { background: #fee2e2; color: #991b1b; }
+
+  /* Modals */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.7); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 32px; width: 500px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
+  .modal h3 { margin-bottom: 20px; font-size: 18px; }
+
+  /* Dashboard Grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+  .stat-card { background: #fff; padding: 24px; border-radius: var(--radius); border: 1px solid var(--border); }
+  .stat-label { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
+  .stat-value { font-size: 24px; font-weight: 700; color: var(--text-main); }
+
+  pre { background: #0f172a; color: #f8fafc; padding: 16px; border-radius: 6px; overflow: auto; font-size: 13px; font-family: var(--font-mono); line-height: 1.5; }
+
+  .message { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+  .error-box { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 16px; border-radius: 6px; margin-bottom: 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="env-section">
+    <h2>Environment</h2>
+    <select id="env-select" onchange="onEnvChange()">
+      <option value="">-- Select --</option>
+    </select>
+    <div class="env-actions">
+      <button class="btn-env-add" onclick="openAddEnvModal()">+ Add Environment</button>
+      <button class="btn-env-remove" onclick="removeEnv()" title="Remove Environment">&#128465;</button>
+    </div>
+  </div>
+
+  <div id="nav-section">
+    <h2>General</h2>
+    <ul id="nav-list">
+      <li onclick="showDashboard()" id="nav-dashboard">📊 Collection Stats</li>
+      <li onclick="showAppState()" id="nav-app-state">📦 App State</li>
+    </ul>
+  </div>
+
+  <div id="collections-header">
+    <h2>
+      Collections
+      <div style="display:flex;gap:8px">
+        <button class="btn-add-col" onclick="openAddCollectionModal()">+ New</button>
+        <button class="btn-refresh" onclick="loadCollections()" title="Refresh">&#x21BB;</button>
+      </div>
+    </h2>
+  </div>
+  <ul id="collection-list">
+    <li class="loading">Select an environment</li>
+  </ul>
+</div>
+
+<div id="main">
+  <div id="header">
+    <h1 id="view-title">Collection Stats</h1>
+    <div class="header-actions" id="header-actions">
+      <!-- Actions based on current view -->
+    </div>
+  </div>
+
+  <div id="tabs-container" class="tabs" style="display:none">
+    <div class="tab active" onclick="switchTab('documents')">Documents</div>
+    <div class="tab" onclick="switchTab('indexes')">Indexes</div>
+    <div class="tab" onclick="switchTab('stats')">Stats</div>
+    <div class="tab" onclick="switchTab('settings')">Settings</div>
+  </div>
+
+  <div id="state-tabs-container" class="tabs" style="display:none">
+    <div class="tab active" onclick="switchStateTab('list')">Key List</div>
+    <div class="tab" onclick="switchStateTab('stats')">State Stats</div>
+  </div>
+
+  <div id="content">
+    <div class="message">Select an environment to get started.</div>
+  </div>
+</div>
+
+<!-- Add Environment Modal -->
+<div id="add-env-modal" class="modal-overlay">
+  <div class="modal">
+    <h3>Add Environment</h3>
+    <div class="form-group">
+      <label>Display Name</label>
+      <input id="env-name" type="text" placeholder="e.g. My App Dev">
+    </div>
+    <div class="form-group">
+      <label>Project Directory</label>
+      <div style="display:flex;gap:8px">
+        <input id="env-dir" type="text" placeholder="/path/to/project" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();fbNavigate(this.value)}">
+        <button class="btn btn-secondary" style="padding:10px" onclick="fbNavigate(document.getElementById('env-dir').value)">Go</button>
+      </div>
+      <div id="file-browser" style="border: 1px solid var(--border); border-radius: 6px; margin-top: 8px; max-height: 180px; overflow-y: auto; background: #f8fafc;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f1f5f9;font-size:12px;position:sticky;top:0;border-bottom:1px solid var(--border)">
+          <button class="btn btn-secondary" style="padding:2px 8px;font-size:11px" onclick="fbUp()">Up</button>
+          <span id="fb-path" style="font-family:var(--font-mono)">/</span>
+        </div>
+        <ul id="fb-list" style="list-style:none"></ul>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Region</label>
+      <select id="env-region">
+        <option value="apac">apac - Asia and Pacific (Japan)</option>
+        <option value="amer">amer - Americas (US)</option>
+        <option value="emea">emea - Europe, Middle East, Africa (EU)</option>
+        <option value="aus">aus - Australia (Australia)</option>
+      </select>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px">
+      <button class="btn btn-secondary" onclick="closeAddEnvModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEnv()">Save Environment</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Collection Modal -->
+<div id="add-col-modal" class="modal-overlay">
+  <div class="modal">
+    <h3>Create Collection</h3>
+    <div class="form-group">
+      <label>Collection Name</label>
+      <input id="new-col-name" type="text" placeholder="e.g. users">
+    </div>
+    <div class="form-group">
+      <label>JSON Validator (Optional)</label>
+      <textarea id="new-col-validator" placeholder='{"type": "object", "required": ["id"]}' rows="4"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px">
+      <button class="btn btn-secondary" onclick="closeAddCollectionModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="createCollection()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Insert Document Modal -->
+<div id="insert-doc-modal" class="modal-overlay">
+  <div class="modal" style="width:600px">
+    <h3>Insert Document</h3>
+    <div class="form-group">
+      <label>Document JSON (Object or Array)</label>
+      <textarea id="insert-doc-json" placeholder='{"key": "value"}' rows="10"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px">
+      <button class="btn btn-secondary" onclick="closeInsertDocModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="insertDocuments()">Insert</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentEnvId = null;
+  let currentCollection = null;
+  let currentTab = 'documents';
+  let currentSubTab = 'list';
+  let currentDocs = [];
+
+  // --- UI Helpers ---
+  function showLoader(targetId, message = 'Fetching data...') {
+    const el = document.getElementById(targetId);
+    if (el) {
+      el.innerHTML = `
+        <div class="loader-container">
+          <div class="loader"></div>
+          <div>${message}</div>
+        </div>
+      `;
+    }
+  }
+
+  // --- Cookie helpers ---
+  function saveEnvCookie(envId) {
+    document.cookie = `selectedEnvId=${envId || ''};path=/;max-age=${60 * 60 * 24 * 365}`;
+  }
+  function getEnvCookie() {
+    const match = document.cookie.match(/(?:^|;\s*)selectedEnvId=(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  // --- API Wrappers ---
+  async function apiFetch(url, options = {}) {
+    try {
+      const res = await fetch(url, options);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      return data;
+    } catch (e) {
+      console.error(`API Error (${url}):`, e);
+      throw e;
+    }
+  }
+
+  // --- Navigation & Tabs ---
+
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.toggle('active', t.textContent.toLowerCase() === tab);
+    });
+    renderCollectionDetail();
+  }
+
+  function showDashboard() {
+    currentCollection = null;
+    currentTab = 'dashboard';
+    document.querySelectorAll('#sidebar li').forEach(li => li.classList.remove('active'));
+    document.getElementById('nav-dashboard').classList.add('active');
+    document.getElementById('view-title').textContent = 'Collection Stats';
+    document.getElementById('tabs-container').style.display = 'none';
+    document.getElementById('state-tabs-container').style.display = 'none';
+    renderDashboard();
+  }
+
+  // --- Environments ---
+
+  async function loadEnvironments() {
+    try {
+      const envs = await apiFetch('/api/environments');
+      const select = document.getElementById('env-select');
+      const prev = currentEnvId || getEnvCookie();
+      select.innerHTML = '<option value="">-- Select --</option>' +
+        envs.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+      if (prev && envs.some(e => e.id == prev)) {
+        select.value = prev;
+        if (!currentEnvId) {
+          currentEnvId = prev;
+          loadCollections();
+        }
+      }
+    } catch (e) { alert('Failed to load environments'); }
+  }
+
+  function onEnvChange() {
+    currentEnvId = document.getElementById('env-select').value || null;
+    saveEnvCookie(currentEnvId);
+    if (currentEnvId) {
+      loadCollections();
+      document.getElementById('content').innerHTML = '<div class="message">Select a tab from the sidebar to view data.</div>';
+    } else {
+      document.getElementById('collection-list').innerHTML = '<li class="loading">Select an environment</li>';
+      document.getElementById('content').innerHTML = '<div class="message">Select an environment to get started.</div>';
+      document.getElementById('view-title').textContent = 'AIO Document DB Viewer';
+      document.getElementById('tabs-container').style.display = 'none';
+      document.getElementById('state-tabs-container').style.display = 'none';
+    }
+  }
+
+  // --- File Browser ---
+  let fbCurrentPath = '';
+  async function fbNavigate(dir) {
+    try {
+      const data = await apiFetch(dir ? `/api/browse?path=${encodeURIComponent(dir)}` : '/api/browse');
+      fbCurrentPath = data.current;
+      document.getElementById('fb-path').textContent = data.current;
+      document.getElementById('env-dir').value = data.current;
+      document.getElementById('fb-list').innerHTML = data.dirs.map(d =>
+        `<li style="padding:6px 12px;cursor:pointer;font-size:13px;" onclick="fbNavigate('${d.path.replace(/'/g, "\\'")}')">📁 ${d.name}</li>`
+      ).join('') || '<li style="padding:6px 12px;color:#94a3b8;font-size:13px">No subdirectories</li>';
+    } catch (e) {}
+  }
+  function fbUp() {
+    const parent = fbCurrentPath.split('/').slice(0, -1).join('/') || '/';
+    fbNavigate(parent);
+  }
+  function openAddEnvModal() {
+    document.getElementById('env-name').value = '';
+    document.getElementById('env-dir').value = '';
+    document.getElementById('add-env-modal').classList.add('open');
+    fbNavigate('');
+  }
+  function closeAddEnvModal() { document.getElementById('add-env-modal').classList.remove('open'); }
+  async function saveEnv() {
+    const name = document.getElementById('env-name').value.trim();
+    const project_dir = document.getElementById('env-dir').value.trim();
+    const region = document.getElementById('env-region').value;
+    if (!name || !project_dir) return alert('Name and directory are required.');
+    try {
+      const env = await apiFetch('/api/environments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, project_dir, region }),
+      });
+      closeAddEnvModal();
+      currentEnvId = env.id;
+      saveEnvCookie(currentEnvId);
+      await loadEnvironments();
+      onEnvChange();
+    } catch (e) { alert(e.message); }
+  }
+  async function removeEnv() {
+    if (!currentEnvId || !confirm('Remove this environment?')) return;
+    await fetch(`/api/environments/${currentEnvId}`, { method: 'DELETE' });
+    currentEnvId = null;
+    saveEnvCookie(null);
+    await loadEnvironments();
+    onEnvChange();
+  }
+
+  // --- Collections ---
+
+  async function loadCollections() {
+    if (!currentEnvId) return;
+    const ul = document.getElementById('collection-list');
+    ul.innerHTML = '<li class="loading">Loading...</li>';
+    try {
+      const names = await apiFetch(`/api/collections?envId=${currentEnvId}`);
+      ul.innerHTML = names.map(n => `<li onclick="selectCollection('${n}', this)">📁 ${n}</li>`).join('');
+      if (currentCollection) {
+        const li = Array.from(ul.querySelectorAll('li')).find(li => li.textContent.includes(currentCollection));
+        if (li) li.classList.add('active');
+      }
+    } catch (e) { ul.innerHTML = `<li class="loading error">${e.message}</li>`; }
+  }
+
+  function selectCollection(name, el) {
+    currentCollection = name;
+    document.querySelectorAll('#sidebar li').forEach(li => li.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('view-title').textContent = name;
+    document.getElementById('tabs-container').style.display = 'flex';
+    document.getElementById('state-tabs-container').style.display = 'none';
+    currentTab = 'documents';
+    switchTab('documents');
+  }
+
+  function showAppState() {
+    currentCollection = null;
+    currentTab = 'state';
+    currentSubTab = 'list';
+    document.querySelectorAll('#sidebar li').forEach(li => li.classList.remove('active'));
+    document.getElementById('nav-app-state').classList.add('active');
+    document.getElementById('view-title').textContent = 'App State';
+    document.getElementById('tabs-container').style.display = 'none';
+    document.getElementById('state-tabs-container').style.display = 'flex';
+    switchStateTab('list');
+  }
+
+  function switchStateTab(tab) {
+    currentSubTab = tab;
+    document.querySelectorAll('#state-tabs-container .tab').forEach(t => {
+      t.classList.toggle('active', t.textContent.toLowerCase().includes(tab));
+    });
+    renderAppState();
+  }
+
+  // --- App State ---
+
+  async function renderAppState() {
+    const content = document.getElementById('content');
+    const actions = document.getElementById('header-actions');
+    actions.innerHTML = '<button class="btn btn-primary" onclick="openPutStateModal()">+ Put State</button>';
+
+    if (currentSubTab === 'stats') {
+      showLoader('content', 'Loading state stats...');
+      try {
+        const data = await apiFetch(`/api/state/stats?envId=${currentEnvId}`);
+        content.innerHTML = `<div class="card"><h3>State Statistics</h3><pre>${data.output}</pre></div>`;
+      } catch (e) { content.innerHTML = `<div class="error-box">${e.message}</div>`; }
+      return;
+    }
+
+    showLoader('content', 'Loading app state keys and values...');
+
+    try {
+      const stateData = await apiFetch(`/api/state/list?envId=${currentEnvId}`);
+      if (!stateData.length) {
+        content.innerHTML = '<div class="message">No state keys found.</div>';
+        return;
+      }
+
+      content.innerHTML = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:100px">Actions</th>
+                <th>Key</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${stateData.map(item => `
+                <tr>
+                  <td>
+                    <button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="deleteState('${item.key}')">Delete</button>
+                  </td>
+                  <td>${item.key}</td>
+                  <td style="white-space: normal; word-break: break-all;">${item.value}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } catch (e) {
+      content.innerHTML = `<div class="error-box">Error loading app state: ${e.message}</div>`;
+    }
+  }
+
+  function openPutStateModal() {
+    const key = prompt('Enter Key:');
+    if (key === null) return;
+    const value = prompt('Enter Value:');
+    if (value === null) return;
+    putState(key, value);
+  }
+
+  async function putState(key, value) {
+    try {
+      await apiFetch('/api/state/put', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, key, value }),
+      });
+      renderAppState();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function getState(key) {
+    try {
+      const data = await apiFetch(`/api/state/get?envId=${currentEnvId}&key=${key}`);
+      alert(`Value for "${key}":\n\n${data.value}`);
+    } catch (e) { alert(e.message); }
+  }
+
+  async function deleteState(key) {
+    if (!confirm(`Delete state key "${key}"?`)) return;
+    try {
+      await apiFetch(`/api/state/delete?envId=${currentEnvId}&keys=${key}`, { method: 'DELETE' });
+      renderAppState();
+    } catch (e) { alert(e.message); }
+  }
+
+  function openAddCollectionModal() {
+    if (!currentEnvId) return alert('Select an environment first.');
+    document.getElementById('new-col-name').value = '';
+    document.getElementById('new-col-validator').value = '';
+    document.getElementById('add-col-modal').classList.add('open');
+  }
+  function closeAddCollectionModal() { document.getElementById('add-col-modal').classList.remove('open'); }
+  async function createCollection() {
+    const name = document.getElementById('new-col-name').value.trim();
+    const validatorStr = document.getElementById('new-col-validator').value.trim();
+    if (!name) return alert('Name is required.');
+    let validator = null;
+    if (validatorStr) {
+      try { validator = JSON.parse(validatorStr); } catch (e) { return alert('Invalid JSON validator'); }
+    }
+    try {
+      await apiFetch('/api/collections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, name, validator }),
+      });
+      closeAddCollectionModal();
+      loadCollections();
+    } catch (e) { alert(e.message); }
+  }
+
+  // --- Dashboard ---
+
+  async function renderDashboard() {
+    const content = document.getElementById('content');
+    showLoader('content', 'Loading collection statistics...');
+    
+    try {
+      const status = await apiFetch(`/api/db-status?envId=${currentEnvId}`);
+      const ping = await apiFetch(`/api/db-ping?envId=${currentEnvId}`);
+      const stats = await apiFetch(`/api/db-stats?envId=${currentEnvId}&scale=1024`);
+
+      content.innerHTML = `
+        <div class="grid">
+          <div class="stat-card">
+            <div class="stat-label">Connectivity</div>
+            <div class="stat-value">${(ping.output.includes('is alive') || ping.output.includes('successful')) ? '<span style="color:#10b981">● Online</span>' : '<span style="color:#ef4444">○ Offline</span>'}</div>
+            <div style="font-size:12px;margin-top:8px;color:var(--text-muted)">${ping.output}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Provisioning</div>
+            <div class="stat-value">${(status.output.toLowerCase().includes('provisioned') || status.output.toLowerCase().includes('ready')) ? 'Provisioned' : 'Unknown'}</div>
+          </div>
+        </div>
+        <h3 style="margin:24px 0 16px">Database Statistics (KB)</h3>
+        <pre>${stats.output}</pre>
+        <h3 style="margin:24px 0 16px">Full Status Output</h3>
+        <pre>${status.output}</pre>
+        <div style="margin-top:40px;padding-top:20px;border-top:1px solid var(--border)">
+          <button class="btn btn-danger" onclick="deleteWorkspaceDb()">Delete Workspace Database</button>
+          <p style="font-size:12px;color:var(--text-muted);margin-top:8px">Caution: This will delete the entire database for this workspace. Non-production only.</p>
+        </div>
+      `;
+    } catch (e) {
+      content.innerHTML = `<div class="error-box">Error loading dashboard: ${e.message}</div>`;
+    }
+  }
+
+  async function deleteWorkspaceDb() {
+    if (!confirm('Are you absolutely sure you want to DELETE the ENTIRE workspace database? This cannot be undone.')) return;
+    if (prompt('Type DELETE to confirm') !== 'DELETE') return;
+    
+    try {
+      await apiFetch('/api/db-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId }),
+      });
+      alert('Database deleted successfully.');
+      showDashboard();
+      loadCollections();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
+  // --- Collection Detail ---
+
+  function renderCollectionDetail() {
+    const content = document.getElementById('content');
+    const actions = document.getElementById('header-actions');
+    actions.innerHTML = '';
+
+    if (currentTab === 'documents') {
+      actions.innerHTML = `
+        <button class="btn btn-secondary" onclick="openInsertDocModal()">+ Insert</button>
+        <button class="btn btn-danger" onclick="deleteAllDocs()">Delete All</button>
+      `;
+      content.innerHTML = `
+        <div class="card">
+          <div class="form-group">
+            <label>Query Filter (JSON)</label>
+            <div style="display:flex;gap:12px">
+              <textarea id="filter-input" rows="2" style="flex:1">{}</textarea>
+              <button class="btn btn-primary" onclick="fetchDocuments()">Run Query</button>
+            </div>
+          </div>
+        </div>
+        <div id="query-results" class="table-container">
+          <div class="message">Run a query to see documents.</div>
+        </div>
+      `;
+      fetchDocuments();
+    } else if (currentTab === 'indexes') {
+      actions.innerHTML = `<button class="btn btn-primary" onclick="openCreateIndexModal()">+ Create Index</button>`;
+      renderIndexes();
+    } else if (currentTab === 'stats') {
+      renderCollectionStats();
+    } else if (currentTab === 'settings') {
+      renderCollectionSettings();
+    }
+  }
+
+  // --- Documents Tab ---
+
+  async function fetchDocuments() {
+    const results = document.getElementById('query-results');
+    const filter = document.getElementById('filter-input').value.trim() || '{}';
+    showLoader('query-results', 'Fetching documents...');
+    try {
+      const data = await apiFetch('/api/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, collection: currentCollection, filter }),
+      });
+      if (!data.length) {
+        results.innerHTML = '<div class="message">No documents found.</div>';
+        return;
+      }
+      currentDocs = data;
+      const keys = [...new Set(data.flatMap(d => Object.keys(d)))];
+      results.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Actions</th>
+              ${keys.map(k => `<th>${k}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map((doc, idx) => `
+              <tr>
+                <td><button class="btn btn-secondary" style="padding:4px 8px;font-size:11px" onclick="deleteDoc(${idx})">Delete</button></td>
+                ${keys.map(k => {
+                  const val = doc[k];
+                  const display = val === undefined ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val);
+                  return `<td title="${display.replace(/"/g, '&quot;')}">${display}</td>`;
+                }).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (e) { results.innerHTML = `<div class="error-box">${e.message}</div>`; }
+  }
+
+  function openInsertDocModal() { document.getElementById('insert-doc-json').value = '{}'; document.getElementById('insert-doc-modal').classList.add('open'); }
+  function closeInsertDocModal() { document.getElementById('insert-doc-modal').classList.remove('open'); }
+  async function insertDocuments() {
+    const json = document.getElementById('insert-doc-json').value.trim();
+    let docs;
+    try { docs = JSON.parse(json); } catch (e) { return alert('Invalid JSON'); }
+    try {
+      await apiFetch('/api/documents/insert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, collection: currentCollection, documents: docs }),
+      });
+      closeInsertDocModal();
+      fetchDocuments();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function deleteDoc(idx) {
+    const doc = currentDocs[idx];
+    if (!confirm('Delete this document?')) return;
+    try {
+      await apiFetch('/api/delete-one', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, collection: currentCollection, doc }),
+      });
+      fetchDocuments();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function deleteAllDocs() {
+    if (!confirm(`Delete ALL documents in "${currentCollection}"?`)) return;
+    try {
+      await apiFetch('/api/delete-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, collection: currentCollection }),
+      });
+      fetchDocuments();
+    } catch (e) { alert(e.message); }
+  }
+
+  // --- Indexes Tab ---
+
+  async function renderIndexes() {
+    const content = document.getElementById('content');
+    showLoader('content', 'Loading indexes...');
+    try {
+      const data = await apiFetch(`/api/indexes?envId=${currentEnvId}&collection=${currentCollection}`);
+      content.innerHTML = `
+        <div class="card">
+          <h3>Collection Indexes</h3>
+          <pre>${data.output}</pre>
+        </div>
+        <div style="margin-top:20px">
+          <button class="btn btn-secondary" onclick="promptDropIndex()">Drop Index</button>
+        </div>
+      `;
+    } catch (e) { content.innerHTML = `<div class="error-box">${e.message}</div>`; }
+  }
+
+  function openCreateIndexModal() {
+    const fields = prompt('Enter fields for index (comma separated), e.g. "sku, rating"');
+    if (!fields) return;
+    createIndex(fields.split(',').map(f => f.trim()));
+  }
+
+  async function createIndex(fields) {
+    try {
+      await apiFetch('/api/indexes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, collection: currentCollection, fields }),
+      });
+      renderIndexes();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function promptDropIndex() {
+    const name = prompt('Enter index name to drop:');
+    if (!name) return;
+    try {
+      await apiFetch(`/api/indexes?envId=${currentEnvId}&collection=${currentCollection}&indexName=${name}`, { method: 'DELETE' });
+      renderIndexes();
+    } catch (e) { alert(e.message); }
+  }
+
+  // --- Stats Tab ---
+
+  async function renderCollectionStats() {
+    const content = document.getElementById('content');
+    showLoader('content', 'Loading stats...');
+    try {
+      const data = await apiFetch(`/api/collections/stats?envId=${currentEnvId}&collection=${currentCollection}`);
+      content.innerHTML = `<div class="card"><h3>Collection Statistics</h3><pre>${data.output}</pre></div>`;
+    } catch (e) { content.innerHTML = `<div class="error-box">${e.message}</div>`; }
+  }
+
+  // --- Settings Tab ---
+
+  function renderCollectionSettings() {
+    const content = document.getElementById('content');
+    content.innerHTML = `
+      <div class="card">
+        <h3>Rename Collection</h3>
+        <div class="form-group">
+          <label>New Name</label>
+          <div style="display:flex;gap:12px">
+            <input id="rename-col-input" type="text" value="${currentCollection}">
+            <button class="btn btn-primary" onclick="renameCollection()">Rename</button>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="border-color:var(--danger)">
+        <h3 style="color:var(--danger)">Danger Zone</h3>
+        <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">Dropping a collection will permanently delete all its data and indexes.</p>
+        <button class="btn btn-danger" onclick="dropCollection()">Drop Collection</button>
+      </div>
+    `;
+  }
+
+  async function renameCollection() {
+    const newName = document.getElementById('rename-col-input').value.trim();
+    if (!newName || newName === currentCollection) return;
+    try {
+      await apiFetch('/api/collections/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, oldName: currentCollection, newName }),
+      });
+      currentCollection = newName;
+      document.getElementById('view-title').textContent = newName;
+      loadCollections();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function dropCollection() {
+    if (!confirm(`DROP collection "${currentCollection}"? This will permanently destroy everything!`)) return;
+    if (prompt(`Type ${currentCollection} to confirm`) !== currentCollection) return;
+    try {
+      await apiFetch('/api/drop-collection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, collection: currentCollection }),
+      });
+      currentCollection = null;
+      showDashboard();
+      loadCollections();
+    } catch (e) { alert(e.message); }
+  }
+
+  // --- Init ---
+  loadEnvironments();
+</script>
+
+</body>
+</html>
