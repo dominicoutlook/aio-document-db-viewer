@@ -95,6 +95,9 @@
   .badge { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
   .badge-success { background: #dcfce7; color: #166534; }
   .badge-error { background: #fee2e2; color: #991b1b; }
+  .badge-info { background: #e0f2fe; color: #075985; }
+  .badge-warning { background: #fef3c7; color: #92400e; }
+  .badge-secondary { background: #f1f5f9; color: #475569; }
 
   /* Modals */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.7); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
@@ -124,7 +127,8 @@
     </select>
     <div class="env-actions">
       <button class="btn-env-add" onclick="openAddEnvModal()">+ Add Environment</button>
-      <button class="btn-env-remove" onclick="removeEnv()" title="Remove Environment">&#128465;</button>
+      <button class="btn-env-remove" onclick="openEditEnvModal()" title="Edit Environment" style="background:#475569;margin-left:4px">✎</button>
+      <button class="btn-env-remove" onclick="removeEnv()" title="Remove Environment" style="margin-left:4px">&#128465;</button>
     </div>
   </div>
 
@@ -133,6 +137,7 @@
     <ul id="nav-list">
       <li onclick="showDashboard()" id="nav-dashboard">📊 Collection Stats</li>
       <li onclick="showAppState()" id="nav-app-state">📦 App State</li>
+      <li onclick="showApiMeshLogs()" id="nav-api-mesh-logs">📋 API Mesh Logs</li>
     </ul>
   </div>
 
@@ -175,10 +180,10 @@
   </div>
 </div>
 
-<!-- Add Environment Modal -->
+<!-- Add/Edit Environment Modal -->
 <div id="add-env-modal" class="modal-overlay">
   <div class="modal">
-    <h3>Add Environment</h3>
+    <h3 id="env-modal-title">Add Environment</h3>
     <div class="form-group">
       <label>Display Name</label>
       <input id="env-name" type="text" placeholder="e.g. My App Dev">
@@ -247,12 +252,271 @@
   </div>
 </div>
 
+<!-- Log Detail Modal -->
+<div id="log-detail-modal" class="modal-overlay">
+  <div class="modal" style="width: 800px; max-width: 90vw;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <h3 style="margin: 0;">Log Details</h3>
+      <button class="btn btn-secondary" onclick="closeLogDetailModal()">Close</button>
+    </div>
+    <div id="log-detail-content" style="max-height: 70vh; overflow-y: auto;">
+      <pre id="log-detail-pre"></pre>
+    </div>
+  </div>
+</div>
+
 <script>
   let currentEnvId = null;
   let currentCollection = null;
   let currentTab = 'documents';
   let currentSubTab = 'list';
   let currentDocs = [];
+
+  // --- API Mesh Logs ---
+
+  function showApiMeshLogs() {
+    currentCollection = null;
+    currentTab = 'api-mesh-logs';
+    document.querySelectorAll('#sidebar li').forEach(li => li.classList.remove('active'));
+    document.getElementById('nav-api-mesh-logs').classList.add('active');
+    document.getElementById('view-title').textContent = 'API Mesh Logs';
+    document.getElementById('tabs-container').style.display = 'none';
+    document.getElementById('state-tabs-container').style.display = 'none';
+    renderApiMeshLogs();
+  }
+
+  async function renderApiMeshLogs() {
+    const content = document.getElementById('content');
+    const actions = document.getElementById('header-actions');
+    actions.innerHTML = '<button class="btn btn-secondary" onclick="renderApiMeshLogs()">Refresh List</button>';
+
+    // Build the bulk panel HTML
+    const now = new Date();
+    const twentyFiveMinAgo = new Date(now.getTime() - 25 * 60 * 1000);
+    
+    // Helper for datetime-local value (YYYY-MM-DDTHH:mm)
+    const toLocalISO = (d) => {
+        const offset = d.getTimezoneOffset();
+        const local = new Date(d.getTime() - (offset * 60 * 1000));
+        return local.toISOString().slice(0, 16);
+    };
+
+    content.innerHTML = `
+      <div class="card">
+        <h3>Bulk Log Retrieval</h3>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr auto; gap:16px; align-items: flex-end;">
+          <div class="form-group" style="margin-bottom:0">
+            <label>Start Time</label>
+            <input type="datetime-local" id="bulk-start" value="${toLocalISO(twentyFiveMinAgo)}">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>End Time</label>
+            <input type="datetime-local" id="bulk-end" value="${toLocalISO(now)}">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>Filename</label>
+            <input type="text" id="bulk-filename" value="mesh_logs.csv">
+          </div>
+          <button class="btn btn-primary" onclick="getBulkLogs()">Get Bulk Logs</button>
+        </div>
+        <div id="bulk-result" style="margin-top:12px; font-size:13px"></div>
+      </div>
+      <div id="api-mesh-logs-list">
+        <div class="loader-container"><div class="loader"></div><div>Loading logs...</div></div>
+      </div>
+      <div id="api-mesh-describe" style="margin-top:24px"></div>
+    `;
+
+    loadMeshDescribe();
+
+    try {
+      const logs = await apiFetch(`/api/api-mesh/log-list?envId=${currentEnvId}`);
+      const listContainer = document.getElementById('api-mesh-logs-list');
+      if (!logs.length) {
+        listContainer.innerHTML = '<div class="message">No logs found.</div>';
+        return;
+      }
+
+      listContainer.innerHTML = `
+        <div class="table-container">
+          <table id="api-mesh-log-table">
+            <thead>
+              <tr>
+                <th>Ray ID</th>
+                <th>Timestamp</th>
+                <th>Response Status</th>
+                <th>Level</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${logs.map(log => {
+                const date = new Date(parseInt(log.timestamp)).toLocaleString();
+                let badgeClass = 'badge-secondary';
+                if (log.level === 'error') badgeClass = 'badge-error';
+                else if (log.level === 'info') badgeClass = 'badge-info';
+                else if (log.level === 'debug') badgeClass = 'badge-success'; // Success is green, good for debug too
+                else if (log.level === 'warn' || log.level === 'warning') badgeClass = 'badge-warning';
+
+                return `
+                  <tr onclick="showLogDetails('${log.rayId}')" style="cursor: pointer;">
+                    <td>${log.rayId}</td>
+                    <td>${date}</td>
+                    <td>${log.status}</td>
+                    <td><span class="badge ${badgeClass}">${log.level}</span></td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } catch (e) {
+      document.getElementById('api-mesh-logs-list').innerHTML = `<div class="error-box">Error loading API Mesh logs: ${e.message}</div>`;
+    }
+  }
+
+  async function getBulkLogs() {
+    let startTime = document.getElementById('bulk-start').value.trim();
+    let endTime = document.getElementById('bulk-end').value.trim();
+    const filename = document.getElementById('bulk-filename').value.trim();
+    const resultDiv = document.getElementById('bulk-result');
+    
+    // Ensure startTime and endTime are in the correct ISO format with Z
+    if (startTime) startTime = new Date(startTime).toISOString().split('.')[0] + 'Z';
+    if (endTime) endTime = new Date(endTime).toISOString().split('.')[0] + 'Z';
+
+    if (!startTime || !endTime || !filename) return alert('All fields are required.');
+    
+    resultDiv.innerHTML = '<span style="color:var(--text-muted)">Executing bulk command...</span>';
+    
+    try {
+      const data = await apiFetch('/api/api-mesh/log-bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envId: currentEnvId, startTime, endTime, filename }),
+      });
+      resultDiv.innerHTML = `<span style="color:#10b981">● Success:</span> <pre style="margin-top:8px">${data.output}</pre>`;
+    } catch (e) {
+      resultDiv.innerHTML = `<span style="color:var(--danger)">Error:</span> ${e.message}`;
+    }
+  }
+
+  async function loadMeshDescribe() {
+    const el = document.getElementById('api-mesh-describe');
+    if (!el) return;
+    showLoader('api-mesh-describe', 'Loading mesh details...');
+    try {
+      const data = await apiFetch(`/api/api-mesh/describe?envId=${currentEnvId}`);
+      el.innerHTML = `
+        <div class="card">
+          <h3>Mesh Configuration Details</h3>
+          <pre>${data.output}</pre>
+        </div>
+      `;
+    } catch (e) {
+      el.innerHTML = `<div class="error-box">Error loading mesh details: ${e.message}</div>`;
+    }
+  }
+
+  async function showLogDetails(rayId) {
+    showLoader('log-detail-pre', 'Fetching log details...');
+    document.getElementById('log-detail-modal').classList.add('open');
+    try {
+      const data = await apiFetch(`/api/api-mesh/log-get?envId=${currentEnvId}&rayId=${rayId}`);
+      let rawOutput = data.output.replace(/\u001b\[[0-9;]*m/g, ''); // Strip ANSI escape codes
+      
+      const lines = rawOutput.split('\n');
+      let formatted = '';
+      let inLogs = false;
+      let logsContent = '';
+
+      for (const line of lines) {
+        if (line.trim().startsWith('Logs :')) {
+          inLogs = true;
+          logsContent = line.substring(line.indexOf(':') + 1).trim();
+          continue;
+        }
+
+        if (inLogs) {
+          // Check if the line is another key (e.g., "Outcome : ok")
+          if (line.includes(' : ') && !line.startsWith(' ') && !line.startsWith('[')) {
+            // End of logs, process what we have
+            formatted += 'Logs :\n' + formatMeshLogs(logsContent) + '\n\n';
+            inLogs = false;
+            formatted += line + '\n';
+          } else {
+            logsContent += ' ' + line.trim();
+          }
+        } else {
+          formatted += line + '\n';
+        }
+      }
+
+      if (inLogs) {
+        formatted += 'Logs :\n' + formatMeshLogs(logsContent) + '\n';
+      }
+
+      document.getElementById('log-detail-pre').textContent = formatted.trim();
+    } catch (e) {
+      document.getElementById('log-detail-pre').textContent = `Error: ${e.message}`;
+    }
+  }
+
+  /**
+   * Helper to format the messy 'Logs' string from api-mesh log-get
+   * It's Python-like list of dicts: [{'Level': '...', 'Message': ['...', '...']}]
+   */
+  function formatMeshLogs(logsStr) {
+    if (!logsStr || logsStr === '[]') return '  []';
+    
+    try {
+      // The CLI output is NOT valid JSON (uses single quotes). 
+      // This is a crude attempt to make it readable without a full Python parser.
+      // We'll replace the structural parts to make it look better.
+      
+      let out = logsStr;
+      
+      // 1. Separate entries
+      out = out.replace(/}, {/g, '},\n\n{');
+      
+      // 2. Add indentation and handle the list of dicts
+      const entries = out.split('\n\n');
+      return entries.map(entry => {
+        // Remove outer brackets for individual entries
+        let e = entry.replace(/^\[/, '').replace(/\]$/, '').trim();
+        
+        // Try to find the JSON message inside the Message array
+        // It's usually like 'Message': ['{"json":"here"}', 'Other text']
+        const msgMatch = e.match(/'Message':\s*\[(.*?)\]/);
+        if (msgMatch) {
+            const inner = msgMatch[1];
+            // Split by comma but handle quotes (very rough)
+            const parts = inner.split(/', '/);
+            const formattedParts = parts.map(p => {
+                let text = p.replace(/^'/, '').replace(/'$/, '').trim();
+                // If it looks like JSON, pretty print it
+                if (text.startsWith('{') && text.endsWith('}')) {
+                    try {
+                        const json = JSON.parse(text);
+                        return '\n      ' + JSON.stringify(json, null, 2).replace(/\n/g, '\n      ');
+                    } catch (err) { return text; }
+                }
+                return text;
+              });
+            e = e.replace(msgMatch[1], formattedParts.join('\n      '));
+        }
+        
+        return '  ' + e.replace(/', '/g, "',\n   '");
+      }).join('\n\n  ───\n\n');
+
+    } catch (e) {
+      return '  ' + logsStr;
+    }
+  }
+
+  function closeLogDetailModal() {
+    document.getElementById('log-detail-modal').classList.remove('open');
+  }
 
   // --- UI Helpers ---
   function showLoader(targetId, message = 'Fetching data...') {
@@ -361,21 +625,51 @@
     const parent = fbCurrentPath.split('/').slice(0, -1).join('/') || '/';
     fbNavigate(parent);
   }
+
+  let editingEnvId = null;
+
   function openAddEnvModal() {
+    editingEnvId = null;
+    document.getElementById('env-modal-title').textContent = 'Add Environment';
     document.getElementById('env-name').value = '';
     document.getElementById('env-dir').value = '';
+    document.getElementById('env-region').value = 'apac';
     document.getElementById('add-env-modal').classList.add('open');
     fbNavigate('');
   }
+
+  async function openEditEnvModal() {
+    if (!currentEnvId) return alert('Select an environment to edit.');
+    try {
+      const envs = await apiFetch('/api/environments');
+      const env = envs.find(e => e.id == currentEnvId);
+      if (!env) return;
+
+      editingEnvId = env.id;
+      document.getElementById('env-modal-title').textContent = 'Edit Environment';
+      document.getElementById('env-name').value = env.name;
+      document.getElementById('env-dir').value = env.project_dir;
+      document.getElementById('env-region').value = env.region;
+      document.getElementById('add-env-modal').classList.add('open');
+      fbNavigate(env.project_dir);
+    } catch (e) { alert(e.message); }
+  }
+
   function closeAddEnvModal() { document.getElementById('add-env-modal').classList.remove('open'); }
+
   async function saveEnv() {
     const name = document.getElementById('env-name').value.trim();
     const project_dir = document.getElementById('env-dir').value.trim();
     const region = document.getElementById('env-region').value;
+    
     if (!name || !project_dir) return alert('Name and directory are required.');
+    
     try {
-      const env = await apiFetch('/api/environments', {
-        method: 'POST',
+      const url = editingEnvId ? `/api/environments/${editingEnvId}` : '/api/environments';
+      const method = editingEnvId ? 'PUT' : 'POST';
+      
+      const env = await apiFetch(url, {
+        method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, project_dir, region }),
       });

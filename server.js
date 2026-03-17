@@ -17,8 +17,11 @@ function saveStore(store) {
 
 function getEnv(envId) {
   const store = loadStore();
-  const env = store.environments.find(e => e.id === Number(envId));
-  if (!env) throw new Error('Environment not found');
+  const envRaw = store.environments.find(e => e.id === Number(envId));
+  if (!envRaw) throw new Error('Environment not found');
+  
+  // Create a copy to avoid mutating the store in-memory
+  const env = { ...envRaw };
   return env;
 }
 
@@ -49,6 +52,23 @@ app.post('/api/environments', (req, res) => {
   store.environments.push(env);
   saveStore(store);
   res.json(env);
+});
+
+app.put('/api/environments/:id', (req, res) => {
+  const { name, project_dir, region } = req.body;
+  const store = loadStore();
+  const index = store.environments.findIndex(e => e.id === Number(req.params.id));
+  if (index === -1) return res.status(404).json({ error: 'Environment not found' });
+  
+  store.environments[index] = { 
+    ...store.environments[index], 
+    name: name || store.environments[index].name,
+    project_dir: project_dir || store.environments[index].project_dir,
+    region: region || store.environments[index].region
+  };
+  
+  saveStore(store);
+  res.json(store.environments[index]);
 });
 
 app.delete('/api/environments/:id', (req, res) => {
@@ -553,6 +573,130 @@ app.post('/api/db-delete', (req, res) => {
       timeout: 30000,
     });
     res.json({ success: true, output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/api-mesh/log-list', (req, res) => {
+  const { envId } = req.query;
+  if (!envId) return res.status(400).json({ error: 'envId is required' });
+
+  try {
+    const env = getEnv(envId);
+    const output = execSync('aio api-mesh:log-list', {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+
+    const logs = [];
+    const lines = output.split('\n');
+    let headerFound = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('───')) {
+        if (trimmed.startsWith('───')) headerFound = true;
+        continue;
+      }
+      
+      // Skip selection info
+      if (trimmed.startsWith('Selected organization:') || 
+          trimmed.startsWith('Selected project:') || 
+          trimmed.startsWith('Select workspace:')) continue;
+
+      if (trimmed.toLowerCase().includes('ray id') && trimmed.toLowerCase().includes('timestamp')) {
+        headerFound = true;
+        continue;
+      }
+      
+      if (headerFound) {
+        // Ray ID, Timestamp, Status, Level
+        // Split by any whitespace and filter out empty strings
+        const parts = trimmed.split(/\s+/).filter(p => p.length > 0);
+        if (parts.length >= 4) {
+          logs.push({
+            rayId: parts[0],
+            timestamp: parts[1],
+            status: parts[2],
+            level: parts[3]
+          });
+        }
+      }
+    }
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/api-mesh/log-get', (req, res) => {
+  const { envId, rayId } = req.query;
+  if (!envId || !rayId) return res.status(400).json({ error: 'envId and rayId are required' });
+
+  try {
+    const env = getEnv(envId);
+    const output = execSync(`aio api-mesh log-get ${rayId}`, {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    
+    // Strip selection info from the beginning
+    const lines = output.split('\n').filter(line => {
+      const t = line.trim();
+      return !t.startsWith('Selected organization:') && 
+             !t.startsWith('Selected project:') && 
+             !t.startsWith('Select workspace:');
+    });
+    
+    res.json({ output: lines.join('\n').trim() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/api-mesh/log-bulk', (req, res) => {
+  const { envId, startTime, endTime, filename } = req.body;
+  if (!envId || !startTime || !endTime || !filename) {
+    return res.status(400).json({ error: 'envId, startTime, endTime, and filename are required' });
+  }
+
+  try {
+    const env = getEnv(envId);
+    const cmd = `echo "y" | aio api-mesh log-get-bulk --startTime ${startTime} --endTime ${endTime} --filename ${filename}`;
+    const output = execSync(cmd, {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 60000, // Bulk might take longer
+    });
+    res.json({ success: true, output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/api-mesh/describe', (req, res) => {
+  const { envId } = req.query;
+  if (!envId) return res.status(400).json({ error: 'envId is required' });
+
+  try {
+    const env = getEnv(envId);
+    const output = execSync('aio api-mesh:describe', {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    
+    // Strip selection info
+    const lines = output.split('\n').filter(line => {
+      const t = line.trim();
+      return !t.startsWith('Selected organization:') && 
+             !t.startsWith('Selected project:') && 
+             !t.startsWith('Select workspace:');
+    });
+    
+    res.json({ output: lines.join('\n').trim() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
