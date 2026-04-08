@@ -138,6 +138,7 @@
       <li onclick="showDashboard()" id="nav-dashboard">📊 Collection Stats</li>
       <li onclick="showAppState()" id="nav-app-state">📦 App State</li>
       <li onclick="showApiMeshLogs()" id="nav-api-mesh-logs">📋 API Mesh Logs</li>
+      <li onclick="showRuntime()" id="nav-runtime">⚡ Triggers & Rules</li>
     </ul>
   </div>
 
@@ -173,6 +174,11 @@
   <div id="state-tabs-container" class="tabs" style="display:none">
     <div class="tab active" onclick="switchStateTab('list')">Key List</div>
     <div class="tab" onclick="switchStateTab('stats')">State Stats</div>
+  </div>
+
+  <div id="runtime-tabs-container" class="tabs" style="display:none">
+    <div class="tab active" onclick="switchRuntimeTab('triggers')">Triggers</div>
+    <div class="tab" onclick="switchRuntimeTab('rules')">Rules</div>
   </div>
 
   <div id="content">
@@ -282,7 +288,91 @@
     document.getElementById('view-title').textContent = 'API Mesh Logs';
     document.getElementById('tabs-container').style.display = 'none';
     document.getElementById('state-tabs-container').style.display = 'none';
+    document.getElementById('runtime-tabs-container').style.display = 'none';
     renderApiMeshLogs();
+  }
+
+  function showRuntime() {
+    currentCollection = null;
+    currentTab = 'runtime';
+    currentSubTab = 'triggers';
+    document.querySelectorAll('#sidebar li').forEach(li => li.classList.remove('active'));
+    document.getElementById('nav-runtime').classList.add('active');
+    document.getElementById('view-title').textContent = 'Runtime Triggers & Rules';
+    document.getElementById('tabs-container').style.display = 'none';
+    document.getElementById('state-tabs-container').style.display = 'none';
+    document.getElementById('runtime-tabs-container').style.display = 'flex';
+    switchRuntimeTab('triggers');
+  }
+
+  function switchRuntimeTab(tab) {
+    currentSubTab = tab;
+    document.querySelectorAll('#runtime-tabs-container .tab').forEach(t => {
+      t.classList.toggle('active', t.textContent.toLowerCase().includes(tab));
+    });
+    renderRuntime();
+  }
+
+  async function renderRuntime() {
+    const content = document.getElementById('content');
+    const actions = document.getElementById('header-actions');
+    actions.innerHTML = `<button class="btn btn-secondary" onclick="renderRuntime()">Refresh List</button>`;
+
+    showLoader('content', `Loading ${currentSubTab}...`);
+
+    try {
+      const endpoint = currentSubTab === 'triggers' ? '/api/runtime/triggers' : '/api/runtime/rules';
+      const items = await apiFetch(`${endpoint}?envId=${currentEnvId}`);
+      
+      if (!items.length) {
+        content.innerHTML = `<div class="message">No ${currentSubTab} found.</div>`;
+        return;
+      }
+
+      // Dynamically get columns from the first item, excluding internal 'name' field
+      const columns = Object.keys(items[0]).filter(k => k !== 'name');
+
+      content.innerHTML = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:100px">Actions</th>
+                ${columns.map(col => `<th>${col}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${items.map(item => `
+                <tr>
+                  <td>
+                    <button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="${currentSubTab === 'triggers' ? 'deleteTrigger' : 'deleteRule'}('${item.name}')">Delete</button>
+                  </td>
+                  ${columns.map(col => `<td>${item[col] || ''}</td>`).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } catch (e) {
+      content.innerHTML = `<div class="error-box">Error loading runtime ${currentSubTab}: ${e.message}</div>`;
+    }
+  }
+
+  async function deleteTrigger(name) {
+    if (!confirm(`Delete trigger "${name}"?`)) return;
+    try {
+      await apiFetch(`/api/runtime/trigger?envId=${currentEnvId}&name=${name}`, { method: 'DELETE' });
+      renderRuntime();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function deleteRule(name) {
+    if (!confirm(`Delete rule "${name}"?`)) return;
+    try {
+      await apiFetch(`/api/runtime/rule?envId=${currentEnvId}&name=${name}`, { method: 'DELETE' });
+      renderRuntime();
+    } catch (e) { alert(e.message); }
   }
 
   async function renderApiMeshLogs() {
@@ -571,6 +661,7 @@
     document.getElementById('view-title').textContent = 'Collection Stats';
     document.getElementById('tabs-container').style.display = 'none';
     document.getElementById('state-tabs-container').style.display = 'none';
+    document.getElementById('runtime-tabs-container').style.display = 'none';
     renderDashboard();
   }
 
@@ -605,6 +696,7 @@
       document.getElementById('view-title').textContent = 'AIO Document DB Viewer';
       document.getElementById('tabs-container').style.display = 'none';
       document.getElementById('state-tabs-container').style.display = 'none';
+      document.getElementById('runtime-tabs-container').style.display = 'none';
     }
   }
 
@@ -712,6 +804,7 @@
     document.getElementById('view-title').textContent = name;
     document.getElementById('tabs-container').style.display = 'flex';
     document.getElementById('state-tabs-container').style.display = 'none';
+    document.getElementById('runtime-tabs-container').style.display = 'none';
     currentTab = 'documents';
     switchTab('documents');
   }
@@ -725,6 +818,7 @@
     document.getElementById('view-title').textContent = 'App State';
     document.getElementById('tabs-container').style.display = 'none';
     document.getElementById('state-tabs-container').style.display = 'flex';
+    document.getElementById('runtime-tabs-container').style.display = 'none';
     switchStateTab('list');
   }
 

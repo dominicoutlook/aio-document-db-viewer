@@ -702,6 +702,133 @@ app.get('/api/api-mesh/describe', (req, res) => {
   }
 });
 
+// --- Runtime Triggers & Rules ---
+
+app.get('/api/runtime/triggers', (req, res) => {
+  const { envId } = req.query;
+  if (!envId) return res.status(400).json({ error: 'envId is required' });
+
+  try {
+    const env = getEnv(envId);
+    const output = execSync('aio rt trigger list', {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    res.json(parseAioTable(output, 'triggers'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/runtime/rules', (req, res) => {
+  const { envId } = req.query;
+  if (!envId) return res.status(400).json({ error: 'envId is required' });
+
+  try {
+    const env = getEnv(envId);
+    const output = execSync('aio rt rule list', {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    res.json(parseAioTable(output, 'rules'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function parseAioTable(output, fallbackName) {
+  const lines = output.split('\n').filter(l => l.trim());
+  if (lines.length === 0) return [];
+
+  // Find separator line (containing a sequence of dashes or box-drawing characters)
+  const sepIdx = lines.findIndex(l => l.includes('───') || l.includes('───') || l.includes('---'));
+  
+  if (sepIdx === -1) {
+    // If no separator, maybe it's just a simple list of names
+    let startIdx = 0;
+    if (lines[0].toLowerCase() === fallbackName.toLowerCase()) startIdx = 1;
+    return lines.slice(startIdx).map(l => {
+      const parts = l.split(/\s+/).filter(p => p);
+      return { name: parts[0], details: parts.slice(1).join(' ') };
+    });
+  }
+
+  const headerLine = lines[sepIdx - 1];
+  const sepLine = lines[sepIdx];
+  const dataLines = lines.slice(sepIdx + 1);
+
+  // Detect column blocks from the separator line
+  const blocks = [];
+  let inBlock = false;
+  let blockStart = 0;
+  for (let i = 0; i < sepLine.length; i++) {
+    if (!inBlock && sepLine[i] !== ' ') {
+      inBlock = true;
+      blockStart = i;
+    } else if (inBlock && (sepLine[i] === ' ' || i === sepLine.length - 1)) {
+      inBlock = false;
+      // If we're at the very last character and it's not a space, include it
+      const blockEnd = (i === sepLine.length - 1 && sepLine[i] !== ' ') ? i + 1 : i;
+      blocks.push({ start: blockStart, end: blockEnd });
+    }
+  }
+
+  return dataLines.map(line => {
+    const obj = {};
+    blocks.forEach(block => {
+      const header = headerLine.substring(block.start, block.end).trim();
+      const value = line.substring(block.start, block.end).trim();
+      if (header) {
+        obj[header] = value;
+      }
+    });
+    
+    // Identify the "name" field for internal operations (like delete)
+    const keys = Object.keys(obj);
+    const nameCandidates = ['rules', 'triggers', 'name', 'rules', 'entities', 'Rules'];
+    const nameKey = keys.find(k => nameCandidates.includes(k.toLowerCase())) || keys[0];
+    obj.name = obj[nameKey];
+    
+    return obj;
+  });
+}
+
+app.delete('/api/runtime/trigger', (req, res) => {
+  const { envId, name } = req.query;
+  if (!envId || !name) return res.status(400).json({ error: 'envId and name are required' });
+
+  try {
+    const env = getEnv(envId);
+    const output = execSync(`aio rt trigger delete ${name}`, {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    res.json({ success: true, output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/runtime/rule', (req, res) => {
+  const { envId, name } = req.query;
+  if (!envId || !name) return res.status(400).json({ error: 'envId and name are required' });
+
+  try {
+    const env = getEnv(envId);
+    const output = execSync(`aio rt rule delete ${name}`, {
+      cwd: env.project_dir,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    res.json({ success: true, output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 9001;
 app.listen(PORT, () => {
   console.log(`Doc DB Viewer running at http://localhost:${PORT}`);
